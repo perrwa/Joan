@@ -1,0 +1,42 @@
+# Target config for the full Joan family: wght 400-700, Roman + Italic.
+# Not runnable yet — Joan.glyphs and Joan-Italic.glyphs don't exist. Both
+# need Regular (400) and Bold (700) masters added in Glyphs.app before this
+# builds. See sources/MASTERS.md for the exact spec.
+sources:
+  - Joan.glyphs
+  - Joan-Italic.glyphs
+familyName: "Joan"
+axisOrder:
+  - wght
+  - ital
+buildVariable: true
+buildStatic: true
+buildSmallCap: false
+cleanUp: true
+instances:
+  Joan[wght].ttf:
+    - familyName: Joan
+      styleName: Regular
+      coordinates:
+        wght: 400
+    - familyName: Joan
+      styleName: SemiBold
+      coordinates:
+        wght: 600
+    - familyName: Joan
+      styleName: Bold
+      coordinates:
+        wght: 700
+  Joan-Italic[wght].ttf:
+    - familyName: Joan
+      styleName: Italic
+      coordinates:
+        wght: 400
+    - familyName: Joan
+      styleName: SemiBold Italic
+      coordinates:
+        wght: 600
+    - familyName: Joan
+      styleName: Bold Italic
+      coordinates:
+        wght: 700
