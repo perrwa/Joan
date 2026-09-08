@@ -19,6 +19,7 @@ __all__ = [
     "Contour", "Part",
     "dist", "unit", "translate", "scale_about",
     "connector", "bounds", "fit",
+    "nodes", "seg_smooth", "node_smooth",
 ]
 
 
@@ -100,6 +101,31 @@ def connector(p0, t0, p1, t1, h0=None, h1=None, smooth=True):
     c1 = (p0[0] + t0[0] * h0, p0[1] + t0[1] * h0)
     c2 = (p1[0] - t1[0] * h1, p1[1] - t1[1] * h1)
     return ("curve", c1, c2, p1, smooth)
+
+
+def nodes(contour):
+    """[start] + each segment's on-curve endpoint, so nodes(c)[i] is the
+    on-curve point that ends segments[i-1] / begins segments[i]. Note
+    len(nodes(c)) == len(c.segments) + 1, with nodes(c)[-1] == c.start
+    (the contour is closed)."""
+    return [contour.start] + [(s[3] if s[0] == "curve" else s[1]) for s in contour.segments]
+
+
+def seg_smooth(seg):
+    """The smooth flag a segment tuple carries for the on-curve point it
+    ends at."""
+    return seg[2] if seg[0] == "line" else seg[4]
+
+
+def node_smooth(contour, idx):
+    """The stored smooth flag for nodes(contour)[idx] — from
+    contour.start_smooth if idx is 0, otherwise from the segment that
+    ends there. Use this to preserve a pre-existing point's corner/smooth
+    status when replacing the segment that reaches it with a connector,
+    rather than defaulting to connector()'s smooth=True."""
+    if idx == 0:
+        return contour.start_smooth
+    return seg_smooth(contour.segments[idx - 1])
 
 
 def bounds(contours):

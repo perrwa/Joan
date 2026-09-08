@@ -31,3 +31,29 @@ SIDEBEARING_DELTA = {
     "p": (0, 20),
     "y": (0, 20),
 }
+
+# Tier 3 construction data (scripts/italic_recipes.py) — cut node indices,
+# connector tangents, and handle lengths for the true italic constructions
+# (github.com/perrwa/Joan/issues/1), against the ALREADY sheared+narrowed
+# italic form of the named source glyph (ctx.italic(name) — see
+# make_italic.Ctx), not roman space.
+#
+# Empty until glyph construction resumes — scripts/italic_recipes.py gates
+# its RECIPES registration on `CONSTRUCTION.get(name)`, so a glyph with no
+# entry here simply isn't built by a recipe yet (falls through to the
+# ordinary mechanical/Tier 2 path), rather than crashing.
+#
+# Shape each key will need, filled in during visual iteration against
+# `python scripts/proof.py --glyphs ... --compare`:
+#   "a": {"ear_cut": (cut_start_node, cut_end_node), "peak": (x, y),
+#         "peak_tangent": (dx, dy), "h0", "h_peak_in", "h_peak_out", "h1"}
+#   "f": {"stem_cut": (right_node, left_node), "tail_slice": (start_seg, count),
+#         "bridge_h0", "bridge_h1", "lsb", "rsb"}
+#   "g": {"bowl_gap": (leave_node, return_node), "tail_slice": (start_seg, count),
+#         "bridge_h0", "bridge_h1", "lsb", "rsb"}
+#   "v"/"w"/"y": {"left": side, "right": side} where each side is
+#         {"tip_idx", "new_tip": (x, y), "leave_tangent": (dx, dy),
+#          "depart_tangent": (dx, dy), "h_in", "h_out",
+#          "tip_in_tangent": (dx, dy)}  # tip_in_tangent optional, defaults
+#                                       # to a smooth pass-through
+CONSTRUCTION = {}

@@ -33,6 +33,7 @@ italic_recipes.py, inspect with scripts/proof.py, repeat.
 Usage: python scripts/make_italic.py
 """
 
+import importlib.util
 import math
 import os
 
@@ -423,11 +424,15 @@ def main():
     print(f"wrote {ITALIC_PATH}")
 
 
-try:
+# Load recipes if the module exists at all — deliberately NOT a bare
+# `try/except ImportError`, which would swallow a real bug inside
+# italic_recipes.py (e.g. a name error, or `from italic_tuning import
+# CONSTRUCTION` failing because that name doesn't exist) identically to
+# "the module just isn't there yet", and make_italic.py would silently
+# fall back to pure Tier 2 with no signal anything is wrong.
+if importlib.util.find_spec("italic_recipes") is not None:
     import italic_recipes
     RECIPES.update(italic_recipes.RECIPES)
-except ImportError:
-    pass
 
 
 if __name__ == "__main__":
