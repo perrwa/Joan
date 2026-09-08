@@ -1,0 +1,11 @@
+# Build environment
+.venv/
+
+# gftools builder intermediate output
+sources/master_ufo/
+sources/instance_ufo/
+sources/instance_ufos/
+*.designspace
+
+# OS cruft
+.DS_Store
