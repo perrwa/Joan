@@ -338,8 +338,9 @@ def compose_from_parts(name, by_name, master_id, pivot_y, memo, part_for_fn):
                 width = base_part.width
             continue
 
+        M_name = mechanical_matrix(name, pivot_y)
         M_c = mechanical_matrix(c.name, pivot_y)
-        linear = _linear_only(L).transform(_linear_only(M_c).inverse())
+        linear = _linear_only(M_name).transform(_linear_only(L)).transform(_linear_only(M_c).inverse())
 
         target = None
         for aname, apos in placed_anchors.items():
