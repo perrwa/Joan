@@ -51,6 +51,13 @@ ROMAN_PATH = os.path.join(REPO_ROOT, "sources", "Joan_Merged_Paths.glyphs")
 ITALIC_PATH = os.path.join(REPO_ROOT, "sources", "Joan-Italic.glyphs")
 
 ITALIC_ANGLE = 10.0
+# Checked against Paolo Biagini's published italic specimen (issue #3):
+# left-edge stem-angle regression on 5 independent lowercase ascenders/
+# descenders (l b h k t) gives mean 9.46 deg, median 9.58 deg, stdev 1.78 deg
+# -- 10.0 sits inside that band, so left unchanged for the Tier A/B (lowercase)
+# scope. Caps measure noticeably steeper (I H L: mean 13.18 deg, stdev 0.28
+# deg) -- a real, separate finding for issue #5 (Tier C) to act on, not this
+# constant, since it's global and this pass doesn't touch caps.
 SLANT_K = math.tan(math.radians(ITALIC_ANGLE))
 
 # name -> callable(ctx) -> Part. Populated below from italic_recipes, kept
