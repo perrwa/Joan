@@ -9,3 +9,6 @@ sources/instance_ufos/
 
 # OS cruft
 .DS_Store
+
+# Local agent instructions
+CLAUDE.md
