@@ -1,6 +1,9 @@
-"""Tier 3 italic constructions (github.com/perrwa/Joan/issues/1): true
-italic letterforms cut from Joan's own contours, instead of the
-mechanical shear scripts/make_italic.py applies to everything else.
+"""Tier A italic constructions (github.com/perrwa/Joan/issues/3): letters
+whose skeleton in Paolo Biagini's published italic specimen genuinely
+differs from Joan's mechanical (sheared-roman) form, cut from Joan's own
+contours plus new connector geometry read from the specimen — not the
+sourcing-only version from the now-closed issue #1, which assumed no real
+reference existed and could only splice roman material together blind.
 
 Every construction here is direct contour surgery, not boolean geometry:
 cut a glyph's own node list at chosen indices (plain Python slicing —
@@ -16,9 +19,10 @@ Each function is `recipe(ctx) -> Part` (see make_italic.Ctx /
 italic_geom.Part). `ctx.italic(name)` hands back the mechanical italic
 form of any roman glyph — sheared, extrema-reinserted, narrowed,
 sidebearing-adjusted — as the raw material recipes cut from. Cut node
-indices and connector tangents live in scripts/italic_tuning.CONSTRUCTION,
-edited during visual iteration against
-`python scripts/proof.py --glyphs ... --compare`.
+indices, connector tangents, and any freehand coordinates live in
+scripts/italic_tuning.CONSTRUCTION, chosen by reading the specimen crop
+(scripts/specimen_score.py) and checked by IoU + visual comparison against
+it, per glyph, per the execution protocol in issue #3.
 
 Registered into make_italic.RECIPES by that module's own import at the
 bottom of make_italic.py.
@@ -47,6 +51,55 @@ def _tail_piece(j_part, start_seg_idx, count):
     start_pt = nodes[start_seg_idx]
     end_pt = piece[-1][3] if piece[-1][0] == "curve" else piece[-1][1]
     return start_pt, piece, end_pt
+
+
+# ------------------------------------------------------------------ n --
+
+def make_n(ctx):
+    """Replace the sheared-roman serif flag at the top of the left stem
+    (a sharp double-back shape -- the mechanical shear of a plain roman
+    top serif) with a calligraphic entry flick: a rounded tip reached by
+    one curve leaving the arch, departed by a second curve that rejoins
+    the stem smoothly (preserving the original smooth flag at the join
+    node, so the transition into the straight stem line isn't a new
+    kink).
+
+    The cut's start node is already a corner point in the mechanical
+    source (the arch's own curve ends there with smooth=False) --
+    consistent with an entry stroke being its own pen-down point, not a
+    continuation of the arch's curve, so no tangent-matching is needed on
+    that side."""
+    c = CONSTRUCTION["n"]
+    mech = ctx.italic("n")
+    outer = mech.contours[0]
+    nodes = ig.nodes(outer)
+
+    cut_start, cut_end = c["cut"]
+    p_start = nodes[cut_start]
+    p_end = nodes[cut_end]
+    tip = c["tip"]
+
+    t_leave_arch = ig.unit(*c["leave_tangent"])
+    t_into_tip = ig.unit(*c["tip_in_tangent"])
+    t_from_tip = ig.unit(*c["tip_out_tangent"])
+    # Arrival tangent at cut_end must match whatever segment continues from
+    # there (the stem's own line direction), so that join stays smooth.
+    p_after = nodes[cut_end + 1]
+    t_into_stem = ig.unit(p_after[0] - p_end[0], p_after[1] - p_end[1])
+
+    seg_a = ig.connector(
+        p_start, t_leave_arch, tip, t_into_tip,
+        h0=c["h_leave"], h1=c["h_into_tip"], smooth=False,
+    )
+    seg_b = ig.connector(
+        tip, t_from_tip, p_end, t_into_stem,
+        h0=c["h_from_tip"], h1=c["h_arrive"],
+        smooth=ig.node_smooth(outer, cut_end),
+    )
+
+    new_segments = list(outer.segments[:cut_start]) + [seg_a, seg_b] + list(outer.segments[cut_end:])
+    new_outer = Contour(outer.start, outer.start_smooth, new_segments)
+    return Part([new_outer] + mech.contours[1:], mech.width, dict(mech.anchors))
 
 
 # ------------------------------------------------------------------ a --
@@ -275,6 +328,7 @@ def _stroked(name):
 # remember to un-comment, and make_italic.py runs end-to-end at every
 # intermediate state.
 _ALL_RECIPES = {
+    "n": make_n,
     "a": make_a,
     "f": make_f,
     "g": make_g,

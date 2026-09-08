@@ -32,19 +32,25 @@ SIDEBEARING_DELTA = {
     "y": (0, 20),
 }
 
-# Tier 3 construction data (scripts/italic_recipes.py) — cut node indices,
+# Tier A construction data (scripts/italic_recipes.py) — cut node indices,
 # connector tangents, and handle lengths for the true italic constructions
-# (github.com/perrwa/Joan/issues/1), against the ALREADY sheared+narrowed
+# (github.com/perrwa/Joan/issues/3), against the ALREADY sheared+narrowed
 # italic form of the named source glyph (ctx.italic(name) — see
-# make_italic.Ctx), not roman space.
+# make_italic.Ctx), not roman space. Coordinates chosen by reading the
+# specimen crop (scripts/specimen_score.py) and checked by IoU + visual
+# comparison against it, per the execution protocol in issue #3 — one
+# glyph at a time, iterated here until approved.
 #
-# Empty until glyph construction resumes — scripts/italic_recipes.py gates
-# its RECIPES registration on `CONSTRUCTION.get(name)`, so a glyph with no
-# entry here simply isn't built by a recipe yet (falls through to the
-# ordinary mechanical/Tier 2 path), rather than crashing.
+# scripts/italic_recipes.py gates its RECIPES registration on
+# `CONSTRUCTION.get(name)`, so a glyph with no entry here simply isn't
+# built by a recipe yet (falls through to the ordinary mechanical/Tier 2
+# path), rather than crashing.
 #
-# Shape each key will need, filled in during visual iteration against
-# `python scripts/proof.py --glyphs ... --compare`:
+# Shape each key needs:
+#   "n": {"cut": (cut_start_node, cut_end_node), "tip": (x, y),
+#         "leave_tangent": (dx, dy), "tip_in_tangent": (dx, dy),
+#         "tip_out_tangent": (dx, dy), "h_leave", "h_into_tip",
+#         "h_from_tip", "h_arrive"}
 #   "a": {"ear_cut": (cut_start_node, cut_end_node), "peak": (x, y),
 #         "peak_tangent": (dx, dy), "h0", "h_peak_in", "h_peak_out", "h1"}
 #   "f": {"stem_cut": (right_node, left_node), "tail_slice": (start_seg, count),
@@ -56,4 +62,21 @@ SIDEBEARING_DELTA = {
 #          "depart_tangent": (dx, dy), "h_in", "h_out",
 #          "tip_in_tangent": (dx, dy)}  # tip_in_tangent optional, defaults
 #                                       # to a smooth pass-through
-CONSTRUCTION = {}
+
+CONSTRUCTION = {
+    # First draft, against the specimen crop read by eye (source is a ~60px
+    # em -- these are a starting point for iteration, not a precision
+    # trace). Replaces nodes 19-24 (the sheared-roman top serif, a sharp
+    # double-back shape) with a rounded calligraphic entry flick.
+    "n": {
+        "cut": (19, 24),
+        "tip": (175.0, 440.0),
+        "leave_tangent": (-0.518, 0.855),
+        "tip_in_tangent": (-0.518, 0.855),
+        "tip_out_tangent": (-0.655, -0.756),
+        "h_leave": 20,
+        "h_into_tip": 20,
+        "h_from_tip": 24,
+        "h_arrive": 24,
+    },
+}

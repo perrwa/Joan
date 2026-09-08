@@ -20,6 +20,7 @@ __all__ = [
     "dist", "unit", "translate", "scale_about",
     "connector", "bounds", "fit",
     "nodes", "seg_smooth", "node_smooth",
+    "stroke_to_contour",
 ]
 
 
@@ -141,6 +142,89 @@ def bounds(contours):
                 xs.extend([seg[1][0], seg[2][0], seg[3][0]])
                 ys.extend([seg[1][1], seg[2][1], seg[3][1]])
     return (min(xs), min(ys), max(xs), max(ys))
+
+
+def _flatten_open(segments, start, samples_per_curve=14):
+    """A spine's own on-curve/off-curve segments (same ('line', pt)/
+    ('curve', c1, c2, pt) shape as Contour.segments, minus the smooth
+    flag — a spine is open, not a closed glyph contour) to a dense
+    polyline: [start, ...intermediate samples..., end]."""
+    pts = [start]
+    for seg in segments:
+        if seg[0] == "line":
+            pts.append(seg[1])
+        else:
+            p0 = pts[-1]
+            _, c1, c2, p3 = seg
+            for i in range(1, samples_per_curve + 1):
+                t = i / samples_per_curve
+                m = 1 - t
+                pts.append(
+                    (
+                        m**3 * p0[0] + 3 * m * m * t * c1[0] + 3 * m * t * t * c2[0] + t**3 * p3[0],
+                        m**3 * p0[1] + 3 * m * m * t * c1[1] + 3 * m * t * t * c2[1] + t**3 * p3[1],
+                    )
+                )
+    return pts
+
+
+def stroke_to_contour(segments, start, half_width, samples_per_curve=14, start_cap=2, end_cap=2):
+    """Turn an open spine (a calligraphic pen path — start point plus
+    line/curve segments, same shape as Contour.segments) into a closed
+    outline Contour: flatten to a dense polyline, offset each sample
+    point by `half_width` (a constant, or a callable half_width(t) for
+    t in [0, 1] along the spine's arc length — thick/thin modulation)
+    along its local normal, and walk out one edge, around a cap, back
+    the other edge, around a cap, to close.
+
+    This is the tool for a uniform (or gently modulated) -weight
+    calligraphic stroke — e.g. a cursive letterform's whole skeleton —
+    as opposed to connector()'s tangent-matched single seam, which is
+    for splicing two already-similar shapes together. Built for issue #3
+    once a local seam turned out not to be enough: Paolo's cursive `n`
+    differs from Joan's mechanical form in overall stroke weight and
+    character across the whole letter, not just at one corner, so the
+    fix has to redraw the whole skeleton, not patch a joint.
+
+    Caps are a short flat polyline of `start_cap`/`end_cap` points
+    across the spine's own end tangent — good enough for a rounded felt-
+    tip look once the flatten density is high; pass 1 for a square-ish
+    cut end instead.
+
+    Returns a single closed Contour with smooth=True line segments
+    throughout (dense polyline, not fit to few beziers — let the caller
+    run it through the ordinary build pipeline, which reinserts extrema
+    on drawn Parts same as mechanical ones)."""
+    poly = _flatten_open(segments, start, samples_per_curve)
+    n = len(poly)
+    if callable(half_width):
+        widths = [half_width(i / (n - 1)) for i in range(n)]
+    else:
+        widths = [half_width] * n
+
+    # Per-sample tangent (central difference, one-sided at the ends) and
+    # its left-hand normal.
+    normals = []
+    for i in range(n):
+        p_prev = poly[i - 1] if i > 0 else poly[i]
+        p_next = poly[i + 1] if i < n - 1 else poly[i]
+        tx, ty = unit(p_next[0] - p_prev[0], p_next[1] - p_prev[1])
+        normals.append((-ty, tx))
+
+    left = [(poly[i][0] + normals[i][0] * widths[i], poly[i][1] + normals[i][1] * widths[i]) for i in range(n)]
+    right = [(poly[i][0] - normals[i][0] * widths[i], poly[i][1] - normals[i][1] * widths[i]) for i in range(n)]
+
+    def cap_points(a, b, count):
+        # A short straight-line cap across the spine's end, `count`
+        # points including both ends.
+        if count <= 1:
+            return [b]
+        return [(a[0] + (b[0] - a[0]) * i / count, a[1] + (b[1] - a[1]) * i / count) for i in range(1, count + 1)]
+
+    ring = list(left) + cap_points(left[-1], right[-1], end_cap) + list(reversed(right))[1:] + cap_points(right[0], left[0], start_cap)
+
+    segs = [("line", pt, True) for pt in ring[1:]]
+    return Contour(ring[0], True, segs)
 
 
 def fit(contours, lsb, rsb):
