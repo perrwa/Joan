@@ -223,6 +223,22 @@ def stroke_to_contour(segments, start, half_width, samples_per_curve=14, start_c
 
     ring = list(left) + cap_points(left[-1], right[-1], end_cap) + list(reversed(right))[1:] + cap_points(right[0], left[0], start_cap)
 
+    # Normalize to positive (CCW, in this x-right/y-up convention) area —
+    # Joan's own outer-contour winding, and what render_part's nonzero
+    # fill expects for a single standalone outer shape. The left/right
+    # offset order above happens to trace clockwise; rather than assume
+    # that never flips (e.g. for a spine that loops back on itself),
+    # check and correct explicitly.
+    area = 0.0
+    for i in range(len(ring)):
+        xA, yA = ring[i]
+        xB, yB = ring[(i + 1) % len(ring)]
+        area += xA * yB - xB * yA
+    if area < 0:
+        core = ring[:-1]  # ring[-1] duplicates ring[0] (explicit closure)
+        core = [core[0]] + list(reversed(core[1:]))  # keep start vertex, reverse direction
+        ring = core + [core[0]]
+
     segs = [("line", pt, True) for pt in ring[1:]]
     return Contour(ring[0], True, segs)
 

@@ -226,15 +226,15 @@ def vectorize(glyph_name, specimen_dir, mech_bbox_height, target_units_height=No
 
 
 if __name__ == "__main__":
-    sys.path.insert(0, "/Users/perrwa/git/Joan/scripts")
     import glyphsLib
     import make_italic as MI
 
     ap = argparse.ArgumentParser()
     ap.add_argument("glyph")
-    ap.add_argument("--specimen-dir", default="/Users/perrwa/.claude/jobs/a09f85f3/tmp")
-    ap.add_argument("--alphamax", type=float, default=1.0)
-    ap.add_argument("--opttolerance", type=float, default=0.2)
+    ap.add_argument("--specimen-dir", default=ss.DEFAULT_SPECIMEN_DIR)
+    ap.add_argument("--mkbitmap-blur", type=int, default=1)
+    ap.add_argument("--alphamax", type=float, default=1.3)
+    ap.add_argument("--opttolerance", type=float, default=2.0)
     ap.add_argument("--render", help="save a rendered preview PNG here")
     args = ap.parse_args()
 
@@ -249,7 +249,7 @@ if __name__ == "__main__":
 
     contours, img_num, crop = vectorize(
         args.glyph, args.specimen_dir, mech_height,
-        alphamax=args.alphamax, opttolerance=args.opttolerance,
+        mkbitmap_blur=args.mkbitmap_blur, alphamax=args.alphamax, opttolerance=args.opttolerance,
     )
     print(f"{args.glyph}: traced {len(contours)} contour(s) from image{img_num}, bbox {ig.bounds(contours)}")
 

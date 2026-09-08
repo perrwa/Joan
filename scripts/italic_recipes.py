@@ -29,6 +29,8 @@ bottom of make_italic.py.
 """
 
 import italic_geom as ig
+import specimen_score as ss
+import vectorize
 from italic_geom import Contour, Part
 from italic_tuning import CONSTRUCTION
 
@@ -55,51 +57,42 @@ def _tail_piece(j_part, start_seg_idx, count):
 
 # ------------------------------------------------------------------ n --
 
-def make_n(ctx):
-    """Replace the sheared-roman serif flag at the top of the left stem
-    (a sharp double-back shape -- the mechanical shear of a plain roman
-    top serif) with a calligraphic entry flick: a rounded tip reached by
-    one curve leaving the arch, departed by a second curve that rejoins
-    the stem smoothly (preserving the original smooth flag at the join
-    node, so the transition into the straight stem line isn't a new
-    kink).
+# Cursive whole-letter rebuilds (issue #3): Paolo's specimen showed these
+# aren't a mechanical stem/bowl with one differing joint -- the entire
+# stroke weight and character differs (thin, uniform-ish calligraphic
+# stroke throughout vs. Joan's thick stems + separate serif elements), so
+# a local node-splice patch can't close the gap no matter how it's tuned
+# (verified directly on n: 3 iterations on just the entry-stroke corner
+# stayed at or below the mechanical baseline IoU).
+#
+# A hand-authored spine (ig.stroke_to_contour: an explicit pen-path
+# centerline, eyeballed against the specimen crop, offset to a stroke
+# outline) was tried next and looked worse than the mechanical baseline by
+# eye despite a better IoU number -- guessing bezier coordinates from a
+# ~30px source doesn't reproduce a calligraphic curve's real proportions.
+# Superseded by direct vectorization instead: scripts/vectorize.py traces
+# the specimen bitmap itself (mkbitmap smoothing + potrace, tuned to avoid
+# both speckle noise and losing thin connecting strokes -- see that
+# module's docstring) and positions the result in italic space. This
+# reproduces the specimen's actual proportions by construction rather than
+# by guesswork; ig.stroke_to_contour stays in the toolkit for manual
+# touch-ups a trace needs locally, not as the primary construction method.
 
-    The cut's start node is already a corner point in the mechanical
-    source (the arch's own curve ends there with smooth=False) --
-    consistent with an entry stroke being its own pen-down point, not a
-    continuation of the arch's curve, so no tangent-matching is needed on
-    that side."""
-    c = CONSTRUCTION["n"]
-    mech = ctx.italic("n")
-    outer = mech.contours[0]
-    nodes = ig.nodes(outer)
+_VECTORIZED = {"n"}
 
-    cut_start, cut_end = c["cut"]
-    p_start = nodes[cut_start]
-    p_end = nodes[cut_end]
-    tip = c["tip"]
 
-    t_leave_arch = ig.unit(*c["leave_tangent"])
-    t_into_tip = ig.unit(*c["tip_in_tangent"])
-    t_from_tip = ig.unit(*c["tip_out_tangent"])
-    # Arrival tangent at cut_end must match whatever segment continues from
-    # there (the stem's own line direction), so that join stays smooth.
-    p_after = nodes[cut_end + 1]
-    t_into_stem = ig.unit(p_after[0] - p_end[0], p_after[1] - p_end[1])
+def _vectorized_recipe(name):
+    def recipe(ctx):
+        mech = ctx.italic(name)
+        mb = ig.bounds(mech.contours)
+        mech_height = mb[3] - mb[1]
+        contours, _img_num, _crop = vectorize.vectorize(name, ss.DEFAULT_SPECIMEN_DIR, mech_height)
+        # Sidebearings are a placeholder pending per-glyph tuning (issue
+        # #3's execution protocol) -- not derived from anything yet.
+        contours, width = ig.fit(contours, 30, 30)
+        return Part(contours, width, {})
 
-    seg_a = ig.connector(
-        p_start, t_leave_arch, tip, t_into_tip,
-        h0=c["h_leave"], h1=c["h_into_tip"], smooth=False,
-    )
-    seg_b = ig.connector(
-        tip, t_from_tip, p_end, t_into_stem,
-        h0=c["h_from_tip"], h1=c["h_arrive"],
-        smooth=ig.node_smooth(outer, cut_end),
-    )
-
-    new_segments = list(outer.segments[:cut_start]) + [seg_a, seg_b] + list(outer.segments[cut_end:])
-    new_outer = Contour(outer.start, outer.start_smooth, new_segments)
-    return Part([new_outer] + mech.contours[1:], mech.width, dict(mech.anchors))
+    return recipe
 
 
 # ------------------------------------------------------------------ a --
@@ -328,7 +321,7 @@ def _stroked(name):
 # remember to un-comment, and make_italic.py runs end-to-end at every
 # intermediate state.
 _ALL_RECIPES = {
-    "n": make_n,
+    "n": _vectorized_recipe("n"),
     "a": make_a,
     "f": make_f,
     "g": make_g,
@@ -337,4 +330,7 @@ _ALL_RECIPES = {
     "y": _stroked("y"),
 }
 
-RECIPES = {name: fn for name, fn in _ALL_RECIPES.items() if CONSTRUCTION.get(name)}
+RECIPES = {
+    name: fn for name, fn in _ALL_RECIPES.items()
+    if CONSTRUCTION.get(name) or name in _VECTORIZED
+}
