@@ -1,11 +1,13 @@
-    # Regular-only build. Joan_Merged_Paths.glyphs has a single master and no
-    # weight/italic axes, so this can only ever produce Regular.
-    # See config-family.yaml for the target wght 400-700 + Italic config, and
-    # sources/MASTERS.md for what's needed in Glyphs.app to get there.
+    # Static Roman + Italic build. Both sources have a single master and no
+    # weight axis, so buildVariable stays false — this produces STAT-linked
+    # Joan-Regular and Joan-Italic statics, not a variable font.
+    # Joan-Italic.glyphs is generated (scripts/make_italic.py), not hand-drawn;
+    # see sources/MASTERS.md for status and scope.
+    # See config-family.yaml for the target wght 400-700 + Italic config.
     sources:
       - Joan_Merged_Paths.glyphs
+      - Joan-Italic.glyphs
     familyName: "Joan"
     buildVariable: false
     buildSmallCap: false
     cleanUp: true
-    
