@@ -1,3 +1,7 @@
+    # Regular-only build. Joan_Merged_Paths.glyphs has a single master and no
+    # weight/italic axes, so this can only ever produce Regular.
+    # See config-family.yaml for the target wght 400-700 + Italic config, and
+    # sources/MASTERS.md for what's needed in Glyphs.app to get there.
     sources:
       - Joan_Merged_Paths.glyphs
     familyName: "Joan"
