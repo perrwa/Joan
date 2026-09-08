@@ -1,14 +1,16 @@
 # What's needed to build wght 400-700 + Italic
 
-`config-family.yaml` is ready to build the full family, but the source data
-isn't there yet. `Joan_Merged_Paths.glyphs`, `Joan_Working_File.glyphs`, and
-`backup/2021_Joan.glyphs` each have exactly one master (`Regular`) and no
-weight or italic axis. Run `python scripts/check_masters.py sources/*.glyphs`
-to confirm this directly.
+`config-family.yaml` is ready to build the full family, but the weight-axis
+source data isn't there yet. `Joan_Merged_Paths.glyphs`, `Joan_Working_File.glyphs`,
+and `backup/2021_Joan.glyphs` each have exactly one master (`Regular`) and no
+weight axis. Run `python scripts/check_masters.py sources/*.glyphs` to confirm
+this directly. `Joan-Italic.glyphs` is intentionally single-master for now
+(see below), so check that one on its own with
+`--single-master-ok sources/Joan-Italic.glyphs`.
 
-This is Glyphs.app work — do not hand-edit the `.glyphs` files for any of it.
-Master/instance/axis structures need Glyphs to keep master IDs, layer IDs,
-and interpolation math consistent.
+Adding a weight axis is Glyphs.app work; do not hand-edit the `.glyphs` files
+for it. Master/instance/axis structures need Glyphs to keep master IDs, layer
+IDs, and interpolation math consistent.
 
 ## Roman: `Joan.glyphs`
 
@@ -28,23 +30,36 @@ Vertical metrics and naming custom parameters carry over unchanged from the
 current Regular master: `typoAscender 1000`, `typoDescender -292`,
 `typoLineGap 0`, `winAscent 1117`, `winDescent 615`, `unitsPerEm 1000`.
 
-## Italic: `Joan-Italic.glyphs`
+## Italic: `sources/Joan-Italic.glyphs`
 
-Separate file, not a slant transform of the roman. Needs:
+This exists now, but not from Glyphs.app work. `scripts/make_italic.py`
+generates it mechanically from `Joan_Merged_Paths.glyphs`. It decomposes every
+composite with full affine composition (so rotated/scaled accents like the
+caron built from a rotated `acutecomb` land correctly), shears 10° about the
+x-height midline, reinserts the curve extrema the shear moves off-node, then
+applies per-category narrowing and per-glyph sidebearing correction from
+`scripts/italic_tuning.py`. Single master, `italicAngle 10`, no weight axis,
+the same gap as the Roman file above.
 
-- Its own `wght` axis, its own Regular (400) and Bold (700) masters.
-- `Italic Angle` set per master in Font Info.
-- True italic letterforms where the roman differs structurally — single-storey
-  `a`, cursive/open `g`, descending `f`, etc. — not just sheared roman glyphs.
+Check it with `python scripts/check_masters.py --single-master-ok
+sources/Joan-Italic.glyphs`. To iterate: edit `italic_tuning.py` (or the
+generator itself), rerun `python scripts/make_italic.py`, then look at the
+result with `python scripts/proof.py` before rebuilding fonts.
 
-Save as `sources/Joan-Italic.glyphs`.
+A shear changes a letterform's angle, not its structure, so this stays a good
+sloped roman: two-storey `a`, double-storey `g`, non-descending `f`. Replacing those letterforms with real italic constructions
+built from Joan's own contours (single-storey `a`, cursive `g`, descending
+`f`, entry/exit strokes on `v w y`) is tracked separately in
+[perrwa/Joan#1](https://github.com/perrwa/Joan/issues/1); the generator has a
+`RECIPES` hook reserved for exactly that.
 
 ## After both files exist
 
 1. `python scripts/check_masters.py sources/Joan.glyphs sources/Joan-Italic.glyphs`
-   should report 2 masters and a `wght` axis for each, exit 0.
+   should report 2 masters and a `wght` axis for each, exit 0. Until
+   `Joan-Italic.glyphs` gets the same weight-axis treatment as the Roman file,
+   check it on its own with `--single-master-ok` instead.
 2. `gftools builder sources/config-family.yaml` should build without error.
 3. Retire `Joan_Merged_Paths.glyphs` / `Joan_Working_File.glyphs`, repoint
    `config.yaml` at the new source (or drop `config.yaml` in favor of
-   `config-family.yaml`), and update `README.md` (drop the "only the roman is
-   available" line, add a changelog entry).
+   `config-family.yaml`).
