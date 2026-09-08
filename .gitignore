@@ -12,3 +12,9 @@ sources/instance_ufos/
 
 # Local agent instructions
 CLAUDE.md
+
+# Paolo Biagini's italic specimen images (github.com/perrwa/Joan/issues/3) --
+# his copyrighted reference images, not ours to redistribute from an OFL
+# repo. Regenerate with scripts/fetch_specimen.py (checksummed against
+# scripts/fetch_specimen.MANIFEST so source drift is detectable).
+reference/

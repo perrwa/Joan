@@ -15,9 +15,16 @@ Usage: python scripts/specimen_score.py <glyph> [--crop out.png]
 
 import argparse
 import math
+import os
 import sys
 
 from PIL import Image, ImageDraw
+
+# Repo-relative, not a session-specific temp path -- populated by
+# scripts/fetch_specimen.py, gitignored (Paolo's copyrighted images).
+DEFAULT_SPECIMEN_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "reference", "pb-italic"
+)
 
 # Row/column layout of https://www.paolobiagini.altervista.org/joan-italic-font.php's
 # three specimen images, transcribed by hand from the published PNGs — cell
@@ -191,13 +198,12 @@ def score(image_dir, name, part):
 
 
 if __name__ == "__main__":
-    sys.path.insert(0, "/Users/perrwa/git/Joan/scripts")
     import glyphsLib
     import make_italic as MI
 
     ap = argparse.ArgumentParser()
     ap.add_argument("glyph")
-    ap.add_argument("--specimen-dir", default="/Users/perrwa/.claude/jobs/a09f85f3/tmp")
+    ap.add_argument("--specimen-dir", default=DEFAULT_SPECIMEN_DIR)
     ap.add_argument("--crop", help="save the specimen crop here")
     ap.add_argument("--render", help="save the mechanical-italic render here")
     args = ap.parse_args()
