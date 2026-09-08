@@ -18,6 +18,7 @@ import os
 import sys
 
 import glyphsLib
+from fontTools.misc.transform import Transform
 from fontTools.pens.recordingPen import RecordingPen
 from PIL import Image, ImageDraw
 
@@ -30,8 +31,11 @@ class GlyphSource:
         self.master_id = self.font.masters[0].id
         self.by_name = {g.name: g for g in self.font.glyphs}
 
-    def contours(self, name, dx=0, dy=0, out=None):
-        """Recording-pen contours for a glyph, flattening components."""
+    def contours(self, name, matrix=Transform(), out=None):
+        """Recording-pen contours for a glyph, flattening components with
+        full affine composition (not just translation — several composites
+        in this font use rotated or scaled accents, e.g. dcaron's caron is
+        a rotated acutecomb)."""
         out = [] if out is None else out
         glyph = self.by_name.get(name)
         if glyph is None:
@@ -45,10 +49,10 @@ class GlyphSource:
             start = max(i for i, n in enumerate(nodes) if n.type != "offcurve")
             seq = nodes[start + 1:] + nodes[:start + 1]
             pen = RecordingPen()
-            pen.moveTo((nodes[start].position.x + dx, nodes[start].position.y + dy))
+            pen.moveTo(matrix.transformPoint((nodes[start].position.x, nodes[start].position.y)))
             buf = []
             for n in seq:
-                pt = (n.position.x + dx, n.position.y + dy)
+                pt = matrix.transformPoint((n.position.x, n.position.y))
                 if n.type == "offcurve":
                     buf.append(pt)
                 elif n.type == "curve":
@@ -60,8 +64,8 @@ class GlyphSource:
             pen.closePath()
             out.append(pen.value)
         for c in layer.components:
-            t = c.transform
-            self.contours(c.name, dx + t[4], dy + t[5], out)
+            sub_matrix = matrix.transform(Transform(*c.transform))
+            self.contours(c.name, sub_matrix, out)
         return out
 
     def width(self, name):
