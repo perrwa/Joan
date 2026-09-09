@@ -156,37 +156,49 @@ def _apply_g_transform(contours, transform):
     return out
 
 
-def _reverse_contour(c):
-    """Reverse a contour's point order (outer <-> hole winding flip).
-    potrace's SVG output uses the opposite outer/hole winding convention
-    from Joan's (verified directly: a traced glyph's sole outer contour
-    came out with negative signed area, which render_part -- and Joan's
-    own mechanical pipeline -- treats as a hole, rendering nothing).
+def _flip_y(contours, svg_height):
+    """Convert potrace's SVG-space output (y-down, y=0 at the image top --
+    what _apply_g_transform's coordinates are in) to font space (y-up,
+    y=0 at the baseline): y' = svg_height - y.
 
-    This is applied to EVERY contour uniformly, not per-contour based on
-    each one's own sign -- a global reversal correctly swaps outer<->hole
-    roles together (an outer contour's winding flips to the right sign,
-    and a hole's winding flips right along with it, since potrace already
-    encodes real outer/hole topology correctly via consistent opposite
-    windings between them). Forcing each contour to positive area
-    independently would be wrong the moment a trace has a real enclosed
-    counter (o, g, p, ...) -- it would fill the counter solid instead of
-    leaving it open."""
-    pts = [c.start] + [(s[3] if s[0] == "curve" else s[1]) for s in c.segments]
-    smooths = [c.start_smooth] + [s[4] if s[0] == "curve" else s[2] for s in c.segments]
-    rev_pts = list(reversed(pts))
-    rev_smooths = list(reversed(smooths))
-    new_start = rev_pts[0]
-    new_start_smooth = rev_smooths[0]
-    new_segs = []
-    for i, seg in enumerate(reversed(c.segments)):
-        end = rev_pts[i + 1]
-        end_smooth = rev_smooths[i + 1]
-        if seg[0] == "line":
-            new_segs.append(("line", end, end_smooth))
-        else:
-            new_segs.append(("curve", seg[2], seg[1], end, end_smooth))
-    return ig.Contour(new_start, new_start_smooth, new_segs)
+    This single operation does two things at once, confirmed empirically
+    (not assumed) on a real traced glyph:
+
+    1. The axis-semantics fix it's named for -- without it, a trace's
+       data has y=0 at the top of the letter and increasing y toward the
+       bottom, backwards from font convention. Found because every
+       preview comparison up to this point went through render_part,
+       which applies its OWN y-flip to convert (assumed-correct)
+       font-space data to image-space for PIL display -- since the data
+       was actually still in image-space, that display flip coincidentally
+       cancelled this bug out, so the preview looked right while the real
+       data (what reaches contour_to_gspath) was upside-down.
+
+    2. The winding-convention fix a separate `_reverse_contour` function
+       used to handle (potrace's SVG winding is opposite Joan's outer/hole
+       convention). A y-axis reflection is itself orientation-reversing --
+       same effect on signed area as reversing a contour's point order.
+       Verified directly: g_transform-only area was -578697.9; EITHER
+       this flip alone OR the old reverse_contour alone corrects it to
+       +578697.9; applying both together (as an earlier, wrong version of
+       this pipeline would if this replaced nothing) cancels back to
+       -578697.9. So this REPLACES _reverse_contour rather than
+       supplementing it -- keeping both was the actual bug, not a missing
+       third operation."""
+    def fn(p):
+        return (p[0], svg_height - p[1])
+
+    out = []
+    for c in contours:
+        start = fn(c.start)
+        segs = []
+        for seg in c.segments:
+            if seg[0] == "line":
+                segs.append(("line", fn(seg[1]), seg[2]))
+            else:
+                segs.append(("curve", fn(seg[1]), fn(seg[2]), fn(seg[3]), seg[4]))
+        out.append(ig.Contour(start, c.start_smooth, segs))
+    return out
 
 
 def vectorize(glyph_name, specimen_dir, mech_bbox_height, target_units_height=None, **trace_kwargs):
@@ -208,7 +220,7 @@ def vectorize(glyph_name, specimen_dir, mech_bbox_height, target_units_height=No
         parse_path(d, pen)
         all_contours.extend(_pen_to_contours(pen))
     all_contours = _apply_g_transform(all_contours, g_transform)
-    all_contours = [_reverse_contour(c) for c in all_contours]
+    all_contours = _flip_y(all_contours, trace_h)
 
     if not all_contours:
         raise ValueError(f"{glyph_name}: trace produced no contours")
