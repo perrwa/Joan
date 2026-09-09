@@ -1,6 +1,6 @@
 """Segment Paolo Biagini's published italic specimen images into per-glyph
-crops, and score a candidate Part's silhouette against one by
-intersection-over-union (IoU).
+crops, and score a candidate Part's silhouette against one by a soft
+(fractional-coverage) intersection-over-union.
 
 This is the objective function behind the Tier A/B execution protocol
 (github.com/perrwa/Joan/issues/3, /4): render a candidate glyph, crop the
@@ -9,6 +9,15 @@ the target" has a number attached, not just a visual impression. Coarse by
 nature — the specimen source is roughly a 60px em — so treat scores as a
 ranking/regression signal alongside a visual check, not a precision fitness
 function.
+
+render_part supersamples then box-downsamples (real antialiasing, not a hard
+threshold) and iou() compares fractional ink coverage rather than two
+booleans — otherwise two candidates differing by less than one native
+specimen pixel can tie exactly even when they'd visibly differ once
+upscaled for human inspection. Found via rubber-duck review after a scale
+comparison's visual judgment ("4x looks best") didn't match a tied ad-hoc
+metric elsewhere in this project; see render_part's and iou's own
+docstrings for the specifics.
 
 Usage: python scripts/specimen_score.py <glyph> [--crop out.png]
 """
@@ -148,21 +157,36 @@ def _signed_area(poly):
     return a / 2
 
 
-def render_part(part, target_height_px):
+def render_part(part, target_height_px, supersample=8):
     """Rasterize a Part's contours (nonzero-winding fill by signed area, not
     a true boolean union — fine for scoring, not for the actual font build)
-    to a 1-bit image scaled so its bbox height matches target_height_px, with
-    the top-left of the bbox at pixel (0, 0) — no padding, matching how
+    to a grayscale image scaled so its bbox height matches target_height_px,
+    with the top-left of the bbox at pixel (0, 0) — no padding, matching how
     iou() aligns it against the specimen crop's own top-left-anchored bbox.
     Aspect ratio is preserved (not stretched to a target width), so a width
-    error shows up as IoU loss instead of being hidden."""
+    error shows up as IoU loss instead of being hidden.
+
+    Draws the polygon fill at `supersample`x the target resolution (still a
+    hard mode "1" edge — PIL's ImageDraw has no antialiasing), then
+    downsamples with Image.BOX (a plain area-average) to get genuine
+    fractional pixel coverage at the boundary, returned as mode "L" (0=ink,
+    255=background, matching the specimen crop's own convention). This is
+    what lets iou() compare real sub-pixel coverage instead of two
+    hard-thresholded masks that can tie exactly on differences smaller than
+    one native specimen pixel (found via rubber-duck review, requested
+    after a scale comparison's visual "4x looks best" judgment didn't match
+    a tied metric). Image.LANCZOS was deliberately NOT used for the
+    downsample — it has negative side-lobes that ring on hard edges, the
+    same failure mode that produced literal ghosting artifacts when tried
+    as a deringing filter earlier this session; Image.BOX has no ringing,
+    which matters more here than its slightly softer falloff."""
     polys = [_flatten(c) for c in part.contours]
     if not polys:
         return None
     xs = [p[0] for q in polys for p in q]
     ys = [p[1] for q in polys for p in q]
     x0, x1, y0, y1 = min(xs), max(xs), min(ys), max(ys)
-    s = target_height_px / max(1e-6, (y1 - y0))
+    s = (target_height_px * supersample) / max(1e-6, (y1 - y0))
     w = max(1, round((x1 - x0) * s))
     h = max(1, round((y1 - y0) * s))
     img = Image.new("1", (w, h), 1)
@@ -170,36 +194,42 @@ def render_part(part, target_height_px):
     for poly in sorted(polys, key=lambda q: -abs(_signed_area(q))):
         fill = 0 if _signed_area(poly) > 0 else 1
         draw.polygon([((p[0] - x0) * s, h - 1 - (p[1] - y0) * s) for p in poly], fill=fill)
-    return img
+    out_w = max(1, round(w / supersample))
+    out_h = max(1, round(h / supersample))
+    return img.convert("L").resize((out_w, out_h), Image.BOX)
 
 
 def iou(specimen_crop, rendered):
-    """Intersection-over-union between a grayscale specimen crop (ink =
-    dark) and a 1-bit rendered image (ink = 0), cropped/compared over the
-    specimen's own bbox.
+    """Soft (fractional-coverage) intersection-over-union between a
+    grayscale specimen crop and a grayscale rendered image — both ink=0,
+    background=255, values in between meaning partial coverage — compared
+    over the specimen's own bbox.
+
+    Generalizes boolean IoU (intersection = count where both are ink,
+    union = count where either is ink) to continuous coverage fractions:
+    intersection = sum(min(a, b)), union = sum(max(a, b)), same ratio.
+    Reduces to the boolean formula exactly when every pixel is fully ink
+    or fully background, and picks up real signal at partially-covered
+    edge pixels that a hard threshold on either image would discard —
+    real signal, since it exists in the specimen crop's own antialiasing
+    and (as of render_part's supersample+box-downsample) in the render
+    too, not invented.
 
     render_part preserves the candidate's own aspect ratio, so its width
-    almost never equals the specimen crop's width -- meaning the naive
-    `rendered.crop((0, 0, w, h))` below is frequently padding, not just
-    cropping. PIL pads an out-of-bounds region of a mode "1" image with
-    0, which in this module's convention IS ink (see r_ink below) --
-    caught by a rubber-duck review of this exact function, then verified
-    directly: a candidate rendering only 4/10 of the specimen's width,
-    fully inked, scored a perfect 1.0 instead of the correct 0.4. Every
-    too-narrow candidate got free credit; the bug was directional (a
-    too-wide candidate's overflow is just truncated by crop, roughly
-    neutral) -- every historical IoU score from this function is
-    systematically biased toward narrow candidates. Fixed by building the
-    comparison canvas explicitly at background value, then pasting
-    whatever of `rendered` actually exists into it, instead of asking
-    crop() to paper over the size mismatch."""
+    almost never equals the specimen crop's width. Building the
+    comparison canvas explicitly at background value (255) and pasting
+    the actual render into it (rather than `rendered.crop((0, 0, w, h))`,
+    which pads out-of-bounds mode "1" pixels with ink, not background —
+    a confirmed, since-fixed bug in an earlier version of this function)
+    keeps a too-narrow candidate from getting free credit for area it
+    never actually drew."""
     w, h = specimen_crop.size
-    r = Image.new("1", (w, h), 1)  # 1 = background, matches rendered's own convention
+    r = Image.new("L", (w, h), 255)
     r.paste(rendered, (0, 0))
-    spec_ink = [1 if v < 128 else 0 for v in specimen_crop.getdata()]
-    r_ink = [1 if v == 0 else 0 for v in r.getdata()]
-    inter = sum(1 for a, b in zip(spec_ink, r_ink) if a and b)
-    union = sum(1 for a, b in zip(spec_ink, r_ink) if a or b)
+    spec_ink = [(255 - v) / 255.0 for v in specimen_crop.getdata()]
+    r_ink = [(255 - v) / 255.0 for v in r.getdata()]
+    inter = sum(min(a, b) for a, b in zip(spec_ink, r_ink))
+    union = sum(max(a, b) for a, b in zip(spec_ink, r_ink))
     return inter / union if union else 0.0
 
 
