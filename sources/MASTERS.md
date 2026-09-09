@@ -46,12 +46,26 @@ sources/Joan-Italic.glyphs`. To iterate: edit `italic_tuning.py` (or the
 generator itself), rerun `python scripts/make_italic.py`, then look at the
 result with `python scripts/proof.py` before rebuilding fonts.
 
-A shear changes a letterform's angle, not its structure, so this stays a good
-sloped roman: two-storey `a`, double-storey `g`, non-descending `f`. Replacing those letterforms with real italic constructions
-built from Joan's own contours (single-storey `a`, cursive `g`, descending
-`f`, entry/exit strokes on `v w y`) is tracked separately in
-[perrwa/Joan#1](https://github.com/perrwa/Joan/issues/1); the generator has a
-`RECIPES` hook reserved for exactly that.
+A plain shear changes a letterform's angle, not its structure, so most of the
+font stays a good sloped roman. `RECIPES` (populated from
+`scripts/italic_recipes.py`) is the hook where individual letters instead get
+a real italic construction, and that's landed for the letters whose specimen
+skeleton genuinely differs from a sheared roman: `a f g y k p n m h r
+germandbls l eng` (single-storey `a`, cursive `g`, descending `f`, entry/exit
+strokes on `y`, ...) are traced directly from Paolo Biagini's published
+italic specimen (`scripts/vectorize.py`: crop → upscale → mkbitmap → potrace
+→ position in italic space) rather than sheared, per
+[perrwa/Joan#3](https://github.com/perrwa/Joan/issues/3). Every composite
+that transitively depends on one of these (`aacute`, `gcommaaccent`, ...) is
+reassembled around the real construction via `compose_from_parts`, not left
+pointing at the old mechanical shape.
+
+The rest of the lowercase/figures/extended-latin set that's close-but-not-
+identical to the specimen (`b c d e i j o q s t u x z v w` + figures, IoU
+0.32–0.81) is still mechanically sheared, pending targeted tuning in
+[perrwa/Joan#4](https://github.com/perrwa/Joan/issues/4). Caps and small caps
+are untouched, tracked in
+[perrwa/Joan#5](https://github.com/perrwa/Joan/issues/5).
 
 ## After both files exist
 
