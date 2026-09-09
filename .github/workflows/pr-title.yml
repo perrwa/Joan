@@ -1,0 +1,12 @@
+name: PR title
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize]
+
+permissions:
+  pull-requests: read
+
+jobs:
+  lint-title:
+    uses: perrwa/dotfiles/.github/workflows/pr-title.yml@441d74d5c1cded9079a640b01e3bae263f8985b3 # ci: make pr-title.yml callable as a reusable workflow (#3)
