@@ -176,9 +176,26 @@ def render_part(part, target_height_px):
 def iou(specimen_crop, rendered):
     """Intersection-over-union between a grayscale specimen crop (ink =
     dark) and a 1-bit rendered image (ink = 0), cropped/compared over the
-    specimen's own bbox."""
+    specimen's own bbox.
+
+    render_part preserves the candidate's own aspect ratio, so its width
+    almost never equals the specimen crop's width -- meaning the naive
+    `rendered.crop((0, 0, w, h))` below is frequently padding, not just
+    cropping. PIL pads an out-of-bounds region of a mode "1" image with
+    0, which in this module's convention IS ink (see r_ink below) --
+    caught by a rubber-duck review of this exact function, then verified
+    directly: a candidate rendering only 4/10 of the specimen's width,
+    fully inked, scored a perfect 1.0 instead of the correct 0.4. Every
+    too-narrow candidate got free credit; the bug was directional (a
+    too-wide candidate's overflow is just truncated by crop, roughly
+    neutral) -- every historical IoU score from this function is
+    systematically biased toward narrow candidates. Fixed by building the
+    comparison canvas explicitly at background value, then pasting
+    whatever of `rendered` actually exists into it, instead of asking
+    crop() to paper over the size mismatch."""
     w, h = specimen_crop.size
-    r = rendered.crop((0, 0, w, h))
+    r = Image.new("1", (w, h), 1)  # 1 = background, matches rendered's own convention
+    r.paste(rendered, (0, 0))
     spec_ink = [1 if v < 128 else 0 for v in specimen_crop.getdata()]
     r_ink = [1 if v == 0 else 0 for v in r.getdata()]
     inter = sum(1 for a, b in zip(spec_ink, r_ink) if a and b)
