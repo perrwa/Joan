@@ -1,0 +1,31 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  zip-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build zip
+        run: |
+          zip -r Joan-${{ github.ref_name }}.zip \
+            fonts \
+            OFL.txt \
+            AUTHORS.txt \
+            CONTRIBUTORS.txt \
+            README.md
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: Joan-${{ github.ref_name }}.zip
+          generate_release_notes: true
