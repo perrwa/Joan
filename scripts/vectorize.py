@@ -38,7 +38,7 @@ def _run(cmd):
     return r
 
 
-def trace_crop(crop, mkbitmap_scale=40, mkbitmap_blur=1, alphamax=1.3, opttolerance=2.0):
+def trace_crop(crop, mkbitmap_scale=40, mkbitmap_blur=1, mkbitmap_threshold=0.45, alphamax=1.3, opttolerance=2.0):
     """Smooth-upscale a specimen crop with mkbitmap, trace it (potrace),
     and return the raw SVG path `d` string(s) plus the pixel dimensions
     the trace's own coordinate system is in (tracked via the traced SVG's
@@ -75,11 +75,21 @@ def trace_crop(crop, mkbitmap_scale=40, mkbitmap_blur=1, alphamax=1.3, opttolera
         crop.save(pgm_path)
 
         pbm_path = td / "mk.pbm"
-        cmd = ["mkbitmap", "-x", "-s", str(mkbitmap_scale)]
+        # -x/--nodefaults turns off ALL of mkbitmap's defaults, including
+        # the threshold -- not just the highpass filter it was added here
+        # to suppress. Every trace this session (n included) was run with
+        # -x and no explicit -t, which meant no bilevel conversion ever
+        # happened: mkbitmap silently emitted a full 254-grey-level PGM
+        # ("P5 ... greymap" per `file`, not the intended "P4 ... bitmap"),
+        # and potrace did its own thresholding downstream instead (its
+        # -k/--blacklevel, default 0.5). Confirmed directly -- `file` on
+        # the untouched output showed "greymap"; adding -t restored
+        # "bitmap". mkbitmap_threshold is real from here on, not cosmetic.
+        pbm_path_cmd = ["mkbitmap", "-x", "-s", str(mkbitmap_scale), "-t", str(mkbitmap_threshold)]
         if mkbitmap_blur:
-            cmd += ["-b", str(mkbitmap_blur)]
-        cmd += ["-o", str(pbm_path), str(pgm_path)]
-        _run(cmd)
+            pbm_path_cmd += ["-b", str(mkbitmap_blur)]
+        pbm_path_cmd += ["-o", str(pbm_path), str(pgm_path)]
+        _run(pbm_path_cmd)
 
         svg_path = td / "out.svg"
         _run(["potrace", "-s", "-a", str(alphamax), "-O", str(opttolerance), "-o", str(svg_path), str(pbm_path)])
@@ -245,6 +255,7 @@ if __name__ == "__main__":
     ap.add_argument("glyph")
     ap.add_argument("--specimen-dir", default=ss.DEFAULT_SPECIMEN_DIR)
     ap.add_argument("--mkbitmap-blur", type=int, default=1)
+    ap.add_argument("--mkbitmap-threshold", type=float, default=0.45)
     ap.add_argument("--alphamax", type=float, default=1.3)
     ap.add_argument("--opttolerance", type=float, default=2.0)
     ap.add_argument("--render", help="save a rendered preview PNG here")
@@ -261,7 +272,8 @@ if __name__ == "__main__":
 
     contours, img_num, crop = vectorize(
         args.glyph, args.specimen_dir, mech_height,
-        mkbitmap_blur=args.mkbitmap_blur, alphamax=args.alphamax, opttolerance=args.opttolerance,
+        mkbitmap_blur=args.mkbitmap_blur, mkbitmap_threshold=args.mkbitmap_threshold,
+        alphamax=args.alphamax, opttolerance=args.opttolerance,
     )
     print(f"{args.glyph}: traced {len(contours)} contour(s) from image{img_num}, bbox {ig.bounds(contours)}")
 
