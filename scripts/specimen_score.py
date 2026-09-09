@@ -102,9 +102,20 @@ def _grid(im):
     return grid
 
 
-def find_cell(image_dir, image_num, name):
-    """Return a tightly-cropped (to ink bounds) PIL image for `name`, or
-    None if it isn't in that specimen image's table."""
+def find_cell(image_dir, image_num, name, pad=0):
+    """Return a PIL image for `name` cropped to its ink bounds plus `pad`
+    pixels of real surrounding context on each side (sourced from the full
+    specimen sheet, not synthetic whitespace), or None if it isn't in that
+    specimen image's table.
+
+    Default pad=0 (the tight ink-only crop) is what scoring (iou/
+    render_part) compares against -- that's the ground-truth silhouette,
+    padding it would change what's being measured. vectorize.py's tracing
+    pipeline wants pad>0 instead: found directly (github.com/perrwa/Joan
+    issue #3 flag-review session) that mkbitmap/potrace produce
+    meaningfully better traces with breathing room around the glyph --
+    the tight crop starves deringing filters and lets edge effects reach
+    the actual strokes."""
     fname, table = SPECIMENS[image_num]
     for row_idx, row in enumerate(table):
         if name in row:
@@ -114,15 +125,16 @@ def find_cell(image_dir, image_num, name):
             x0, x1 = cb[row.index(name)]
             px = im.load()
             ys = [y for y in range(y0, y1 + 1) if any(px[x, y] < 128 for x in range(x0, x1 + 1))]
-            return im.crop((x0, ys[0], x1 + 1, ys[-1] + 1))
+            w, h = im.size
+            return im.crop((max(0, x0 - pad), max(0, ys[0] - pad), min(w, x1 + 1 + pad), min(h, ys[-1] + 1 + pad)))
     return None
 
 
-def find_cell_any(image_dir, name):
+def find_cell_any(image_dir, name, pad=0):
     """Search all three specimen images for `name`; returns (image_num, crop)
-    or (None, None)."""
+    or (None, None). See find_cell for `pad`."""
     for n in (1, 2, 3):
-        c = find_cell(image_dir, n, name)
+        c = find_cell(image_dir, n, name, pad=pad)
         if c is not None:
             return n, c
     return None, None

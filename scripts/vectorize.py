@@ -4,31 +4,48 @@ proved hand-guessing bezier coordinates from a ~30px source doesn't
 converge, even when it beats the IoU number, because eyeballing can't
 reproduce a calligraphic curve's actual proportions).
 
-Pipeline: crop (scripts/specimen_score.py, already validated) -> upscale +
-smooth (mkbitmap, potrace's own documented approach for low-res sources) ->
-trace (potrace -> SVG) -> parse (fontTools.svgLib, already a project
-dependency) -> position into the glyph's italic-space font units using the
-same crop-height/bbox-height calibration specimen_score.render_part uses
-for scoring.
+Pipeline, as settled by a full live flag-review session on `n` (issue #3):
+crop with real surrounding margin -> external Lanczos upscale -> optional
+deringing (median/NLM/none -- the specimen PNGs are JPEG-derived, confirmed
+by measuring 8px-periodic block-boundary artifacts) -> mkbitmap (threshold
+only; scaling and blur happen elsewhere in this pipeline, not inside
+mkbitmap) -> potrace (SVG) -> parse (fontTools.svgLib) -> position into the
+glyph's italic-space font units using the same crop-height/bbox-height
+calibration specimen_score.render_part uses for scoring.
 
-Requires `potrace`/`mkbitmap` on PATH (`brew install potrace`).
+Every default below is a real finding from that session, not a guess --
+see each function's docstring for the specific evidence. They're tuned
+against `n` specifically; per the issue #3 execution protocol, each
+subsequent Tier A glyph gets its own review before assuming these transfer,
+though they're the right starting point to iterate from.
 
-Usage: python scripts/vectorize.py <glyph> [--alphamax 1.0] [--opttolerance 0.2]
+Requires `potrace`/`mkbitmap` on PATH (`brew install potrace`) and
+`numpy`/`opencv-python` in the venv (for NLM deringing).
+
+Usage: python scripts/vectorize.py <glyph> [--upscale 3] [--dering nlm] [--alphamax 1.0]
 """
 
 import argparse
 import re
 import subprocess
-import sys
 import tempfile
 from pathlib import Path
 
+import numpy as np
 from fontTools.pens.recordingPen import RecordingPen
 from fontTools.svgLib.path import parse_path
-from PIL import Image
+from PIL import Image, ImageFilter
 
 import italic_geom as ig
 import specimen_score as ss
+
+# Real surrounding context around the tight ink crop, sourced from the
+# specimen sheet itself (not synthetic whitespace) -- found directly that
+# mkbitmap/potrace produce meaningfully better traces with this margin; the
+# tight crop starves deringing filters and lets edge effects reach real
+# strokes. specimen_score.find_cell's own default (pad=0) is what scoring
+# still compares against -- only the tracing INPUT gets padded.
+CROP_PAD = 20
 
 
 def _run(cmd):
@@ -38,61 +55,125 @@ def _run(cmd):
     return r
 
 
-def trace_crop(crop, mkbitmap_scale=40, mkbitmap_blur=1, mkbitmap_threshold=0.45, alphamax=1.3, opttolerance=2.0):
-    """Smooth-upscale a specimen crop with mkbitmap, trace it (potrace),
-    and return the raw SVG path `d` string(s) plus the pixel dimensions
-    the trace's own coordinate system is in (tracked via the traced SVG's
-    own viewBox so no separate bookkeeping is needed).
+def dering(image, method="nlm"):
+    """Apply the deringing method settled on `n`'s flag-review session.
+    `method` is "none", "median", or "nlm" -- kept selectable per glyph
+    rather than hardcoded, since issue #3's protocol reviews each Tier A
+    letter individually and a different glyph's stroke geometry could
+    favor a different method (this one only proved out on n's specific
+    trace, where nlm-h30 won on both the corrected soft-IoU metric and a
+    high-resolution visual check of curve smoothness -- a naive polygon-
+    vs-curve trap that a purely numeric comparison would have missed, see
+    the alphamax note in `trace`).
 
-    Feeds the RAW crop straight to mkbitmap rather than pre-upscaling with
-    PIL first: doing both (a generic Lanczos upscale, then mkbitmap's own
-    scale+filter) produced ~1000 spurious single-pixel speckle contours on
-    a real test glyph -- Lanczos's negative side-lobes ring on a small
-    near-binary source, and thresholding that ringing creates exactly this
-    kind of noise.
+    "median" is a size=5 (radius-2) PIL MedianFilter -- radius 1 barely
+    moved a measured JPEG-block-artifact ratio (periodic block noise
+    isn't impulse noise, which is what median filters are built for);
+    radius 2 was the point real deringing started showing up without
+    visibly rounding off corners.
 
-    `-b/--blur` (mkbitmap_blur) is the actual smoothing lever -- a lowpass
-    filter, default off. `-f/--filter` (not exposed here, left at
-    mkbitmap's own default) is a HIGHPASS filter for correcting uneven
-    scan lighting, unrelated to smoothing; an earlier version of this
-    function tuned that one by mistake and couldn't get past ~157
-    segments for a single glyph no matter how it was pushed.
+    "nlm" is OpenCV's fastNlMeansDenoising, h=30 -- weaker settings
+    (h=10) were barely different from doing nothing; h=30 is where it
+    started doing real, edge-preserving work.
 
-    Blur is a real tradeoff, not just a cleanup knob, at this source
-    resolution: a real test glyph's own connecting stroke (the arch in a
-    cursive n) is only 1-2px wide, and blur=2 erased it completely --
-    rendered as two disconnected stems, not an n. blur=1 was the sweet
-    spot found by direct comparison: keeps every structural stroke intact
-    while still roughly halving segment count (206 -> 114) versus no blur
-    at all. Reducing further toward a hand-drawn font's typical 20-60
-    nodes is a nice-to-have for later (fontTools-side curve simplification
-    on the result), not a correctness requirement -- checked that this
-    setting doesn't self-intersect (scripts/vectorize.py's own smoke test
-    via pathops) before treating it as good enough."""
+    Both parameter choices came from a systematic sweep (measured against
+    real traced-and-scored output, not just the denoising step in
+    isolation) -- see github.com/perrwa/Joan/issues/3 for the comparison
+    artifacts."""
+    if method == "none":
+        return image
+    if method == "median":
+        return image.filter(ImageFilter.MedianFilter(size=5))
+    if method == "nlm":
+        import cv2
+
+        out = cv2.fastNlMeansDenoising(np.array(image), h=30, templateWindowSize=7, searchWindowSize=21)
+        return Image.fromarray(out)
+    raise ValueError(f"unknown deringing method {method!r}")
+
+
+def trace_crop(crop, upscale=3, dering_method="nlm", mkbitmap_threshold=0.70, alphamax=1.0, opttolerance=0.1, turdsize=0, unit=2):
+    """Upscale a (loosely-cropped, see CROP_PAD) specimen crop, optionally
+    dering it, trace it (potrace), and return the raw SVG path `d`
+    string(s) plus the pixel dimensions the trace's own coordinate system
+    is in (tracked via the traced SVG's own viewBox so no separate
+    bookkeeping is needed).
+
+    `upscale` (default 3, Lanczos) happens BEFORE mkbitmap ever sees the
+    image, not via mkbitmap's own `-s` (which is fixed at 1 here) --
+    found that plain upscale-then-trace, with NO deringing at all, beat
+    every deringing method tried at every scale from 1x to 10x on a
+    proper end-to-end (real trace, corrected soft-IoU) comparison. The
+    earlier belief that deringing helped came from an ad-hoc bitmap-noise
+    metric that didn't correlate with actual trace fidelity -- a
+    corrected `iou()` (specimen_score.py, itself fixed twice this same
+    session: a crop-padding bug that rewarded too-narrow candidates, and
+    a resolution-collapsing bug that let close candidates tie exactly)
+    settled it. On `n` specifically, nlm deringing at 3x edged out no
+    deringing once threshold/alphamax were ALSO retuned per-candidate
+    (0.8759 none vs 0.8744 nlm -- close enough that it's worth reviewing
+    both on the next glyph rather than assuming one wins generally).
+
+    `mkbitmap_threshold` (default 0.70, NOT mkbitmap's own 0.45 default)
+    came from a full sweep 0.30-0.70 per candidate -- confirmed
+    deterministic by rerunning the entire sweep twice more and getting
+    bit-identical results every time, so the (non-monotonic, genuinely
+    jumpy -- thresholding is a discontinuous operation on curve topology)
+    curve isn't measurement noise.
+
+    `alphamax`/`opttolerance`/`turdsize`/`unit` came from a sequential
+    potrace-flag sweep per candidate. The single most important finding
+    there: the numeric IoU winner for one candidate was alphamax=0.0 --
+    potrace's PURE POLYGON mode, no curves at all. It scored highest
+    because a polygon hugs a pixelated bitmap boundary more precisely
+    than a smooth curve does, which is exactly the wrong thing to
+    optimize for a font glyph. Invisible at the tiny scoring-resolution
+    render; obvious once rendered at real size. Any automated future
+    sweep needs a smoothness check (or a floor on alphamax, empirically
+    around 0.8-1.2 depending on the candidate) alongside the IoU number,
+    not IoU alone.
+
+    turdsize/turnpolicy were swept too and found to have zero effect at
+    any tested value -- confirmed genuine (not a silent flag-parsing bug)
+    by verifying turdsize deletes the glyph entirely once pushed past its
+    actual ink-pixel area (~3590px² on n's trace), and turnpolicy visibly
+    changes a synthetic ambiguous-corner test case. They just don't
+    matter for a clean single-contour trace with no ambiguous corners --
+    left at defaults (turdsize=0) rather than omitted, so they're still
+    on the table to revisit per glyph.
+
+    `-b/--blur` (mkbitmap's own native blur, layered on top of whichever
+    deringing already ran) was swept 0-5 and lost monotonically every
+    time -- not exposed here at all; the external `dering()` step is the
+    only smoothing lever."""
+    up = crop.resize((crop.width * upscale, crop.height * upscale), Image.LANCZOS)
+    deringed = dering(up, dering_method)
+
     with tempfile.TemporaryDirectory() as td:
         td = Path(td)
         pgm_path = td / "in.pgm"
-        crop.save(pgm_path)
+        deringed.save(pgm_path)
 
         pbm_path = td / "mk.pbm"
         # -x/--nodefaults turns off ALL of mkbitmap's defaults, including
-        # the threshold -- not just the highpass filter it was added here
-        # to suppress. Every trace this session (n included) was run with
-        # -x and no explicit -t, which meant no bilevel conversion ever
-        # happened: mkbitmap silently emitted a full 254-grey-level PGM
-        # ("P5 ... greymap" per `file`, not the intended "P4 ... bitmap"),
-        # and potrace did its own thresholding downstream instead (its
-        # -k/--blacklevel, default 0.5). Confirmed directly -- `file` on
-        # the untouched output showed "greymap"; adding -t restored
-        # "bitmap". mkbitmap_threshold is real from here on, not cosmetic.
-        pbm_path_cmd = ["mkbitmap", "-x", "-s", str(mkbitmap_scale), "-t", str(mkbitmap_threshold)]
-        if mkbitmap_blur:
-            pbm_path_cmd += ["-b", str(mkbitmap_blur)]
-        pbm_path_cmd += ["-o", str(pbm_path), str(pgm_path)]
-        _run(pbm_path_cmd)
+        # the threshold -- not just the highpass filter it's meant to
+        # suppress here. An earlier version of this pipeline passed -x
+        # with no explicit -t and got a silently un-thresholded greyscale
+        # PGM instead of a bilevel PBM for the entire session, until
+        # caught by `file` reporting "greymap" instead of "bitmap".
+        # mkbitmap_threshold is always passed explicitly now, for exactly
+        # that reason -- see the note above on where its value comes from.
+        _run(["mkbitmap", "-x", "-s", "1", "-t", str(mkbitmap_threshold), "-o", str(pbm_path), str(pgm_path)])
 
         svg_path = td / "out.svg"
-        _run(["potrace", "-s", "-a", str(alphamax), "-O", str(opttolerance), "-o", str(svg_path), str(pbm_path)])
+        _run([
+            "potrace", "-s",
+            "-a", str(alphamax),
+            "-O", str(opttolerance),
+            "-t", str(turdsize),
+            "-u", str(unit),
+            "-o", str(svg_path), str(pbm_path),
+        ])
 
         svg_text = svg_path.read_text()
 
@@ -218,8 +299,12 @@ def vectorize(glyph_name, specimen_dir, mech_bbox_height, target_units_height=No
     mechanical form's overall height as the calibration anchor -- same
     role specimen_score.render_part's target_height_px plays for scoring,
     just inverted: there we scale the glyph down to the crop; here we
-    scale the crop's trace up to glyph space)."""
-    img_num, crop = ss.find_cell_any(specimen_dir, glyph_name)
+    scale the crop's trace up to glyph space).
+
+    Uses a loosely-padded crop (CROP_PAD) for the tracing input -- not the
+    tight crop specimen_score.find_cell_any returns by default, which is
+    what scoring compares against instead."""
+    img_num, crop = ss.find_cell_any(specimen_dir, glyph_name, pad=CROP_PAD)
     if crop is None:
         raise ValueError(f"{glyph_name} not found in any specimen image")
 
@@ -244,7 +329,12 @@ def vectorize(glyph_name, specimen_dir, mech_bbox_height, target_units_height=No
     # the mechanical/tuning pipeline already does.
     x0b, y0b, _, _ = ig.bounds(positioned)
     positioned = ig.translate(positioned, -x0b, -y0b)
-    return positioned, img_num, crop
+
+    # Score against the TIGHT (unpadded) crop -- that's the true ground
+    # truth silhouette; the loose crop was only ever meant as tracing
+    # input with breathing room, not the comparison target.
+    _, score_crop = ss.find_cell_any(specimen_dir, glyph_name, pad=0)
+    return positioned, img_num, score_crop
 
 
 if __name__ == "__main__":
@@ -254,10 +344,13 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("glyph")
     ap.add_argument("--specimen-dir", default=ss.DEFAULT_SPECIMEN_DIR)
-    ap.add_argument("--mkbitmap-blur", type=int, default=1)
-    ap.add_argument("--mkbitmap-threshold", type=float, default=0.45)
-    ap.add_argument("--alphamax", type=float, default=1.3)
-    ap.add_argument("--opttolerance", type=float, default=2.0)
+    ap.add_argument("--upscale", type=int, default=3)
+    ap.add_argument("--dering", choices=["none", "median", "nlm"], default="nlm")
+    ap.add_argument("--mkbitmap-threshold", type=float, default=0.70)
+    ap.add_argument("--alphamax", type=float, default=1.0)
+    ap.add_argument("--opttolerance", type=float, default=0.1)
+    ap.add_argument("--turdsize", type=int, default=0)
+    ap.add_argument("--unit", type=int, default=2)
     ap.add_argument("--render", help="save a rendered preview PNG here")
     args = ap.parse_args()
 
@@ -272,8 +365,10 @@ if __name__ == "__main__":
 
     contours, img_num, crop = vectorize(
         args.glyph, args.specimen_dir, mech_height,
-        mkbitmap_blur=args.mkbitmap_blur, mkbitmap_threshold=args.mkbitmap_threshold,
+        upscale=args.upscale, dering_method=args.dering,
+        mkbitmap_threshold=args.mkbitmap_threshold,
         alphamax=args.alphamax, opttolerance=args.opttolerance,
+        turdsize=args.turdsize, unit=args.unit,
     )
     print(f"{args.glyph}: traced {len(contours)} contour(s) from image{img_num}, bbox {ig.bounds(contours)}")
 
@@ -282,5 +377,5 @@ if __name__ == "__main__":
         part = Part(contours, 0, {})
         rendered = ss.render_part(part, crop.size[1])
         s = ss.iou(crop, rendered)
-        print(f"IoU vs its own source specimen (sanity check, should be high): {s:.3f}")
-        rendered.convert("L").resize((rendered.width * 10, rendered.height * 10), Image.LANCZOS).save(args.render)
+        print(f"IoU vs specimen: {s:.4f}")
+        rendered.resize((rendered.width * 10, rendered.height * 10), Image.LANCZOS).save(args.render)

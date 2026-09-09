@@ -54,6 +54,8 @@ MutatorMath==3.0.1
 nanoemoji==0.16.0
 networkx==3.2.1
 ninja==1.13.2
+numpy==2.0.2
+opencv-python==5.0.0.93
 openstep_plist==0.5.2
 opentype-sanitizer==9.2.0
 opentypespec==1.9.2
