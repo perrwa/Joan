@@ -1,0 +1,23 @@
+# macOS
+.DS_Store
+._*
+.Spotlight-V100
+.Trashes
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# gftools build artifacts
+master_ufo/
+instance_ufo/
+build.ninja
+.ninja_log
+.ninja_deps
+
+# Local tooling / non-distributable reference
+.claude/settings.local.json
+reference/
