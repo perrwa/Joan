@@ -78,7 +78,7 @@ def _tail_piece(j_part, start_seg_idx, count):
 # by guesswork; ig.stroke_to_contour stays in the toolkit for manual
 # touch-ups a trace needs locally, not as the primary construction method.
 
-_VECTORIZED = {"n"}
+_VECTORIZED = {"n", "m", "h", "r", "k", "p", "y", "germandbls", "l", "eng", "a", "f", "g"}
 
 
 def _vectorized_recipe(name):
@@ -321,13 +321,8 @@ def _stroked(name):
 # remember to un-comment, and make_italic.py runs end-to-end at every
 # intermediate state.
 _ALL_RECIPES = {
-    "n": _vectorized_recipe("n"),
-    "a": make_a,
-    "f": make_f,
-    "g": make_g,
-    "v": _stroked("v"),
-    "w": _stroked("w"),
-    "y": _stroked("y"),
+    name: _vectorized_recipe(name)
+    for name in ("n", "m", "h", "r", "k", "p", "y", "germandbls", "l", "eng", "a", "f", "g")
 }
 
 RECIPES = {
