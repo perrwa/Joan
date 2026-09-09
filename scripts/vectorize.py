@@ -301,10 +301,25 @@ def vectorize(glyph_name, specimen_dir, mech_bbox_height, target_units_height=No
     just inverted: there we scale the glyph down to the crop; here we
     scale the crop's trace up to glyph space).
 
+    Positions the result so the SPECIMEN ROW's real shared baseline lands
+    at font-space y=0 -- NOT the traced glyph's own bbox minimum, which
+    an earlier version of this function used and which is only the same
+    thing for non-descenders. Found directly (github.com/perrwa/Joan
+    issue #3): g's mechanical form genuinely descends (bbox -284 to 464),
+    and f's specimen does too even though f's roman form doesn't --
+    "bbox-min -> 0" would put a descender's TIP at baseline instead of
+    below it, silently shifting the whole glyph up by the descender's own
+    depth. g was presented and approved before this fix existed and needs
+    re-tracing. specimen_score.find_cell_any's baseline_in_crop (median
+    ink-bottom across the row -- robust since most letters in a row don't
+    descend) is threaded through the same upscale/flip transforms the
+    contour geometry goes through, so the same point that's "baseline" in
+    the specimen ends up at y=0 here, whatever the glyph's own shape does.
+
     Uses a loosely-padded crop (CROP_PAD) for the tracing input -- not the
     tight crop specimen_score.find_cell_any returns by default, which is
     what scoring compares against instead."""
-    img_num, crop = ss.find_cell_any(specimen_dir, glyph_name, pad=CROP_PAD)
+    img_num, crop, baseline_in_crop = ss.find_cell_any(specimen_dir, glyph_name, pad=CROP_PAD)
     if crop is None:
         raise ValueError(f"{glyph_name} not found in any specimen image")
 
@@ -320,20 +335,32 @@ def vectorize(glyph_name, specimen_dir, mech_bbox_height, target_units_height=No
     if not all_contours:
         raise ValueError(f"{glyph_name}: trace produced no contours")
 
+    # baseline_in_crop is in the ORIGINAL (pre-upscale) crop's y-down
+    # pixel coords. trace_crop's mkbitmap/potrace stage always sees the
+    # crop already upscaled by `upscale` (default matches trace_crop's
+    # own signature) at a fixed internal mkbitmap -s 1, so the traced
+    # SVG's pixel space is exactly `upscale`x the crop's -- scale the
+    # reference point the same way, then apply the same y-down -> y-up
+    # flip _flip_y just applied to the contours, so both are in the same
+    # space before the final scale/position step below.
+    upscale = trace_kwargs.get("upscale", 3)
+    baseline_trace_px = trace_h - (baseline_in_crop * upscale)
+
     x0, y0, x1, y1 = ig.bounds(all_contours)
     th = target_units_height if target_units_height is not None else mech_bbox_height
     s = th / max(1e-6, (y1 - y0))
     positioned = ig.scale_about(all_contours, s, s, x0, y0)
-    # Land the traced bbox's own min at (0, 0) -- final placement (advance
-    # width, sidebearings) is a per-glyph decision made afterward, same as
-    # the mechanical/tuning pipeline already does.
-    x0b, y0b, _, _ = ig.bounds(positioned)
-    positioned = ig.translate(positioned, -x0b, -y0b)
+    # scale_about's own formula (point' = origin + (point-origin)*s, with
+    # origin=(x0,y0)) applied to the baseline reference point -- keeps it
+    # exactly consistent with what just happened to the contour geometry.
+    baseline_scaled = y0 + (baseline_trace_px - y0) * s
+    x0b, _, _, _ = ig.bounds(positioned)
+    positioned = ig.translate(positioned, -x0b, -baseline_scaled)
 
     # Score against the TIGHT (unpadded) crop -- that's the true ground
     # truth silhouette; the loose crop was only ever meant as tracing
     # input with breathing room, not the comparison target.
-    _, score_crop = ss.find_cell_any(specimen_dir, glyph_name, pad=0)
+    _, score_crop, _ = ss.find_cell_any(specimen_dir, glyph_name, pad=0)
     return positioned, img_num, score_crop
 
 

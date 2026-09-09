@@ -102,11 +102,62 @@ def _grid(im):
     return grid
 
 
+def _row_baseline_sheet_px(im, grid, row_idx, row_names):
+    """Baseline of one specimen row, in the full sheet's own pixel
+    coordinates (y-down) -- the mean ink-bottom of the tightest cluster
+    of agreeing cells in the row, not any single hardcoded reference
+    letter: non-descenders all bottom out at (almost) the exact same
+    pixel row since they share one baseline, while descenders cluster at
+    a distinctly larger y (further down). Taking the largest 3px-wide
+    cluster finds that consensus regardless of which cells happen to be
+    descenders.
+
+    NOT a plain median across the row -- tried that first and it broke
+    exactly here: image1's row1 (f g h i j ij k kgreenlandic) splits
+    exactly 4 descenders (f g j ij, bottom=275) / 4 non-descenders (h i k
+    kgreenlandic, bottom=257-258), and `sorted(bottoms)[len//2]` on an
+    even-length 50/50 split picks the upper-middle element -- which
+    landed on a DESCENDER's bottom (275) instead of true baseline (257),
+    caught by the resulting descender depth (23 units) being visibly too
+    shallow against what the specimen crop actually shows.
+
+    Needed at all because a glyph's own ink bbox bottom is NOT baseline
+    for a descender -- positioning one by "its own bbox bottom = 0" (an
+    earlier version of vectorize.py's positioning did this) puts the
+    descender's TIP at baseline instead of below it, silently shifting
+    the whole glyph up by the descender's own depth. Caught only because
+    g's mechanical form genuinely descends (bbox -284 to 464) and g had
+    already been presented and approved before this existed."""
+    (y0, y1), cb = grid[row_idx]
+    px = im.load()
+    bottoms = []
+    for x0, x1 in cb:
+        ys = [y for y in range(y0, y1 + 1) if any(px[x, y] < 128 for x in range(x0, x1 + 1))]
+        if ys:
+            bottoms.append(ys[-1])
+    bottoms.sort()
+    best_cluster = [bottoms[0]]
+    cur = [bottoms[0]]
+    for v in bottoms[1:]:
+        if v - cur[0] <= 3:
+            cur.append(v)
+        else:
+            cur = [v]
+        if len(cur) > len(best_cluster):
+            best_cluster = cur
+    return round(sum(best_cluster) / len(best_cluster))
+
+
 def find_cell(image_dir, image_num, name, pad=0):
-    """Return a PIL image for `name` cropped to its ink bounds plus `pad`
-    pixels of real surrounding context on each side (sourced from the full
-    specimen sheet, not synthetic whitespace), or None if it isn't in that
-    specimen image's table.
+    """Return (PIL image, baseline_y_in_crop) for `name` cropped to its
+    ink bounds plus `pad` pixels of real surrounding context on each side
+    (sourced from the full specimen sheet, not synthetic whitespace), or
+    (None, None) if it isn't in that specimen image's table.
+    `baseline_y_in_crop` is the row's shared baseline (see
+    `_row_baseline_sheet_px`), in the SAME y-down pixel coordinates as
+    the returned crop's own indexing (0 = crop's top row) -- use it to
+    position a glyph correctly rather than assuming the crop's own
+    bottom edge is baseline, which is only true for non-descenders.
 
     Default pad=0 (the tight ink-only crop) is what scoring (iou/
     render_part) compares against -- that's the ground-truth silhouette,
@@ -126,18 +177,22 @@ def find_cell(image_dir, image_num, name, pad=0):
             px = im.load()
             ys = [y for y in range(y0, y1 + 1) if any(px[x, y] < 128 for x in range(x0, x1 + 1))]
             w, h = im.size
-            return im.crop((max(0, x0 - pad), max(0, ys[0] - pad), min(w, x1 + 1 + pad), min(h, ys[-1] + 1 + pad)))
-    return None
+            crop_top = max(0, ys[0] - pad)
+            crop = im.crop((max(0, x0 - pad), crop_top, min(w, x1 + 1 + pad), min(h, ys[-1] + 1 + pad)))
+            baseline_sheet = _row_baseline_sheet_px(im, grid, row_idx, row)
+            return crop, baseline_sheet - crop_top
+    return None, None
 
 
 def find_cell_any(image_dir, name, pad=0):
-    """Search all three specimen images for `name`; returns (image_num, crop)
-    or (None, None). See find_cell for `pad`."""
+    """Search all three specimen images for `name`; returns
+    (image_num, crop, baseline_y_in_crop) or (None, None, None). See
+    find_cell for `pad` and `baseline_y_in_crop`."""
     for n in (1, 2, 3):
-        c = find_cell(image_dir, n, name, pad=pad)
+        c, baseline = find_cell(image_dir, n, name, pad=pad)
         if c is not None:
-            return n, c
-    return None, None
+            return n, c, baseline
+    return None, None, None
 
 
 def _flatten(contour, n=24):
@@ -249,7 +304,7 @@ def score(image_dir, name, part):
     """Convenience: find name's specimen cell in any of the 3 images, score
     part against it. Returns (image_num, iou_score, specimen_crop, rendered)
     or (None, None, None, None) if name isn't in any specimen."""
-    image_num, crop = find_cell_any(image_dir, name)
+    image_num, crop, _baseline = find_cell_any(image_dir, name)
     if crop is None or not part.contours:
         return None, None, crop, None
     rendered = render_part(part, crop.size[1])
